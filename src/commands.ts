@@ -1,7 +1,7 @@
 // The skill-atlas commands. The same code serves the Node CLI and the browser
 // terminal: everything that differs between them comes in through the context.
 import { AtlasError } from './core/errors.ts';
-import { skillLink, type Repository, type Skill } from './core/model.ts';
+import { encodePath, skillLink, type Repository, type Skill } from './core/model.ts';
 import { scan, type Source } from './core/scan.ts';
 
 export type Context = {
@@ -83,7 +83,8 @@ function printRepository(repository: Repository, skills: Skill[], context: Conte
     // The whole description when the text is in it, but not in its first sentence.
     const sentence = firstSentence(texts.description);
     const description = matches(texts.description, filter) && !matches(sentence, filter) ? texts.description : sentence;
-    // In the link, only the path is searched, so only the path is highlighted.
+    // In the link, only the path is searched, so only the path is highlighted; skillLink ends
+    // with encodePath(path).
     const link = mark ? texts.link.slice(0, -encodePath(texts.path).length) + markedPath(texts.path, filter, mark) : texts.link;
     printSkill({ ...texts, name: marked(texts.name), description: marked(description), link, copies: marked(texts.copies) }, context.print);
   }
@@ -120,11 +121,6 @@ function markedPath(path: string, filter: string, mark: (text: string) => string
     end = match.index + match[0].length;
   }
   return result + encodePath(path.slice(end));
-}
-
-/** As `skillLink` writes a path: each segment URL-encoded. */
-function encodePath(path: string): string {
-  return path.split('/').map(encodeURIComponent).join('/');
 }
 
 /** The filter, as plain text, in any case. */

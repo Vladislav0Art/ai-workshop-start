@@ -1,5 +1,6 @@
 import { AtlasError } from './errors.ts';
 import { SKILL_ROOTS } from './find.ts';
+import { encodePath } from './model.ts';
 import type { Source } from './scan.ts';
 
 /** The part of `fetch` the core uses, so tests and the browser can pass their own. */
@@ -133,10 +134,6 @@ function client({ fetch, token }: GitHubOptions) {
       return new Uint8Array(await response.arrayBuffer());
     },
   };
-}
-
-function encodePath(path: string): string {
-  return path.split('/').map(encodeURIComponent).join('/');
 }
 
 function describe(error: unknown): string {
