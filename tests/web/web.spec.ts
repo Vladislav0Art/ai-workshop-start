@@ -222,3 +222,87 @@ test('a pasted token → API requests carry it, through the tree: a browser cann
   expect(origins).toEqual([]);
   expect(await page.evaluate('sessionStorage.length')).toBe(0);
 });
+
+const themeSwitch = (page: Page) => page.getByRole('switch', { name: 'Dark theme' });
+const background = (page: Page) => page.evaluate<string>('getComputedStyle(document.body).backgroundColor');
+const LIGHT = 'oklch(1 0 0)';
+const DARK = 'oklch(0.145 0 0)';
+
+for (const [system, color] of [
+  ['light', LIGHT],
+  ['dark', DARK],
+] as const) {
+  test(`the page opens in the system's theme: ${system}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: system });
+    await page.goto('/');
+    await expect(themeSwitch(page)).toHaveAttribute('aria-checked', String(system === 'dark'));
+    await expect(page.locator('html')).toHaveClass(system === 'dark' ? 'dark' : '');
+    expect(await background(page)).toBe(color);
+  });
+}
+
+test("the system's theme is there before the page's script runs: no flash of the light one", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.route('**/src/main.tsx', (route) => route.abort());
+  await page.goto('/');
+  // The styles come with that script in development, so the class is what tells.
+  await expect(page.locator('html')).toHaveClass('dark');
+  await expect(themeSwitch(page)).toHaveCount(0);
+});
+
+test('the theme switch changes the theme at once, and back; the scan, its result and the fields stay', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await github(page, fixture());
+  await scan(page, 'https://github.com/JetBrains/fixture', 'github_pat_secret');
+  await expect(page.getByTestId('skill')).toHaveCount(4);
+
+  await themeSwitch(page).click();
+  await expect(themeSwitch(page)).toHaveAttribute('aria-checked', 'true');
+  await expect(themeSwitch(page)).toHaveAttribute('title', 'Switch to the light theme');
+  await expect(page.locator('html')).toHaveClass('dark');
+  expect(await background(page)).toBe(DARK);
+  await expect(page.getByTestId('skill')).toHaveCount(4);
+  await expect(page.getByLabel('GitHub repository URL')).toHaveValue('https://github.com/JetBrains/fixture');
+  await expect(page.getByLabel('GitHub token')).toHaveValue('github_pat_secret');
+  expect(new URL(page.url()).searchParams.get('repo')).toBe('https://github.com/JetBrains/fixture');
+
+  await themeSwitch(page).click();
+  await expect(themeSwitch(page)).toHaveAttribute('aria-checked', 'false');
+  await expect(themeSwitch(page)).toHaveAttribute('title', 'Switch to the dark theme');
+  await expect(page.locator('html')).not.toHaveClass('dark');
+  expect(await background(page)).toBe(LIGHT);
+  await expect(page.getByTestId('skill')).toHaveCount(4);
+});
+
+test('the theme follows the system until the user chooses one', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/');
+  await expect(themeSwitch(page)).toHaveAttribute('aria-checked', 'false');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(themeSwitch(page)).toHaveAttribute('aria-checked', 'true');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(themeSwitch(page)).toHaveAttribute('aria-checked', 'false');
+
+  await themeSwitch(page).click();
+  await expect(themeSwitch(page)).toHaveAttribute('aria-checked', 'true');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveClass('dark');
+  await expect(themeSwitch(page)).toHaveAttribute('aria-checked', 'true');
+});
+
+test('the chosen theme is not stored: the next visit follows the system again', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/');
+  await themeSwitch(page).click();
+  await expect(page.locator('html')).toHaveClass('dark');
+
+  const { cookies, origins } = await page.context().storageState();
+  expect(cookies).toEqual([]);
+  expect(origins).toEqual([]); // no localStorage
+  expect(await page.evaluate('sessionStorage.length')).toBe(0);
+
+  await page.reload();
+  await expect(themeSwitch(page)).toHaveAttribute('aria-checked', 'false');
+  await expect(page.locator('html')).not.toHaveClass('dark');
+});

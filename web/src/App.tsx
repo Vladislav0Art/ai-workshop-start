@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { AlertCircle, ExternalLink, FileText, GitCommit, KeyRound, Loader2, Search, TriangleAlert } from 'lucide-react';
+import { AlertCircle, ExternalLink, FileText, GitCommit, KeyRound, Loader2, Moon, Search, Sun, TriangleAlert } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { describeError, firstSentence, scanRepository, skillLink, type ScanResult } from '@/lib/atlas';
+import { useTheme } from '@/lib/theme';
 
 type State =
   | { status: 'idle' }
@@ -54,9 +55,12 @@ export function App() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-8 px-4 py-12">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Skill Atlas</h1>
-        <p className="text-muted-foreground">Every agent skill in a GitHub repository: paste its link to list each SKILL.md.</p>
+      <header className="flex items-start justify-between gap-4">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight">Skill Atlas</h1>
+          <p className="text-muted-foreground">Every agent skill in a GitHub repository: paste its link to list each SKILL.md.</p>
+        </div>
+        <ThemeSwitch />
       </header>
 
       <form onSubmit={submit} className="flex flex-col gap-2" aria-label="Scan a repository">
@@ -112,6 +116,27 @@ export function App() {
       )}
       {state.status === 'done' && <Result result={state.result} />}
     </main>
+  );
+}
+
+/** Light or dark: on is dark. The icon shows the theme the page is in. */
+function ThemeSwitch() {
+  const [theme, setTheme] = useTheme();
+  const dark = theme === 'dark';
+  return (
+    <Button
+      type="button"
+      role="switch"
+      aria-checked={dark}
+      aria-label="Dark theme"
+      title={dark ? 'Switch to the light theme' : 'Switch to the dark theme'}
+      variant="outline"
+      size="icon"
+      className="shrink-0"
+      onClick={() => setTheme(dark ? 'light' : 'dark')}
+    >
+      {dark ? <Moon /> : <Sun />}
+    </Button>
   );
 }
 

@@ -12,6 +12,10 @@ Sent only to `api.github.com`; *never in the address, never stored*.
 - The link pins the *scanned commit*; `also in <paths>` for copies
 - Warnings (malformed front matter, a tree too large to list) in a *warning box*; the scan goes on
 - No skills → `No SKILL.md in this repository.`
+## Theme
+A **light** and a **dark** theme. The page opens in the *system's theme*, and follows it while
+the user has not chosen. The **theme switch** in the header (on: dark) changes it at once;
+the scan, its result and the fields stay. *Nothing is stored*: the next visit follows the system again.
 ## Errors
 In an error box, with the CLI's message: not a GitHub URL, repository not found,
 GitHub unreachable, rate limit (→ *paste a GitHub token*), a rejected token.
