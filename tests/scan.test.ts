@@ -2,11 +2,12 @@
 // ./fixture and for small GitHub repositories answered in tests/helpers.ts.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
+import { createBrowserBackend } from '../src/browser.ts';
 import { findSkills } from '../src/core/find.ts';
 import { openGitHub } from '../src/core/github.ts';
 import { parseSkill } from '../src/core/parse.ts';
@@ -181,4 +182,162 @@ test('rate limit → a message that asks for GITHUB_TOKEN', async () => {
   await assert.rejects(openGitHub('https://github.com/JetBrains/MPS', { fetch: limited }), {
     message: 'GitHub rate limit reached; set GITHUB_TOKEN',
   });
+});
+
+// scan --filter: spec/cli.md, "Filter".
+const marked = (text: string) => `[${text}]`;
+
+test('--filter keeps the skills with the text in their name, in any case, and counts them', async () => {
+  const filtered = await atlas(['scan', FIXTURE, '--filter', 'COMMITS']);
+  assert.equal(filtered.code, 0, filtered.stderr);
+  assert.equal(
+    filtered.stdout,
+    [
+      'fixture · 1 of 4 skills matches "COMMITS"',
+      'commits — Write commit messages the way this repository does.',
+      `  ${pathToFileURL(FIXTURE).href}/.claude/skills/commits/SKILL.md`,
+    ].join('\n'),
+  );
+  // Warnings are not filtered.
+  assert.match(filtered.stderr, /^warning: \.agents\/skills\/release-checklist\/SKILL\.md: malformed front matter: /);
+});
+
+test('--filter looks in the whole description, and prints it whole when the text is past the first sentence', async () => {
+  const filtered = await atlas(['scan', FIXTURE, '--filter=kotlin']);
+  assert.equal(filtered.code, 0, filtered.stderr);
+  assert.equal(
+    filtered.stdout,
+    [
+      'fixture · 1 of 4 skills matches "kotlin"',
+      "code-style — Follow the project's code style. Use before committing Kotlin or Java changes.",
+      `  ${pathToFileURL(FIXTURE).href}/.github/skills/code-style/SKILL.md`,
+    ].join('\n'),
+  );
+});
+
+test('--filter looks in the path, and highlights only the path in the link', async () => {
+  const filtered = await atlas(['scan', FIXTURE, '--filter', '.agents/'], marked);
+  assert.equal(filtered.code, 0, filtered.stderr);
+  assert.equal(
+    filtered.stdout,
+    ['fixture · 1 of 4 skills matches ".agents/"', 'release-checklist', `  ${pathToFileURL(FIXTURE).href}/[.agents/]skills/release-checklist/SKILL.md`].join('\n'),
+  );
+
+  const example = await atlas(['scan', 'github.com/JetBrains/example', '--filter', 'claude/skills'], marked);
+  assert.equal(example.code, 0, example.stderr);
+  assert.equal(
+    example.stdout,
+    [
+      'JetBrains/example · 1 of 1 skill matches "claude/skills"',
+      'commits — Write commit messages the way this repository does.',
+      `  https://github.com/JetBrains/example/blob/${EXAMPLE_COMMIT}/.[claude/skills]/commits/SKILL.md`,
+    ].join('\n'),
+  );
+});
+
+test('--filter does not look in the rest of the link: the host, the owner, the commit, the directory', async () => {
+  for (const filter of ['github', 'JetBrains', 'blob', EXAMPLE_COMMIT.slice(0, 7), 'ab']) {
+    const example = await atlas(['scan', 'github.com/JetBrains/example', '--filter', filter]);
+    assert.equal(example.stdout, `JetBrains/example · 0 of 1 skill match ${JSON.stringify(filter)}`);
+  }
+  // The x of "fixture", the scanned directory.
+  assert.equal((await atlas(['scan', FIXTURE, '--filter', 'x'])).stdout, 'fixture · 0 of 4 skills match "x"');
+});
+
+test('--filter highlights a path as the link writes it, URL-encoded', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'skill-atlas-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, '.claude/skills/my skill'), { recursive: true });
+  writeFileSync(join(root, '.claude/skills/my skill/SKILL.md'), '---\nname: spaced\ndescription: A skill.\n---\n');
+  const filtered = await atlas(['scan', root, '--filter', 'my skill'], marked);
+  assert.equal(filtered.code, 0, filtered.stderr);
+  assert.equal(filtered.stdout.split('\n')[2], `  ${pathToFileURL(root).href}/.claude/skills/[my%20skill]/SKILL.md`);
+});
+
+test('--filter is plain text: no match → no skills, exit code 0', async () => {
+  const filtered = await atlas(['scan', FIXTURE, '--filter', '.*']);
+  assert.equal(filtered.code, 0, filtered.stderr);
+  assert.equal(filtered.stdout, 'fixture · 0 of 4 skills match ".*"');
+});
+
+test('--filter highlights every match in the name, description and link, as it is written', async () => {
+  const filtered = await atlas(['scan', FIXTURE, '--filter', 'Code'], marked);
+  assert.equal(filtered.code, 0, filtered.stderr);
+  assert.equal(
+    filtered.stdout,
+    [
+      'fixture · 1 of 4 skills matches "Code"',
+      "[code]-style — Follow the project's [code] style.",
+      `  ${pathToFileURL(FIXTURE).href}/.github/skills/[code]-style/SKILL.md`,
+    ].join('\n'),
+  );
+
+  const committing = await atlas(['scan', FIXTURE, '--filter', 'commit'], marked);
+  assert.equal(
+    committing.stdout,
+    [
+      'fixture · 2 of 4 skills match "commit"',
+      "code-style — Follow the project's code style. Use before [commit]ting Kotlin or Java changes.",
+      `  ${pathToFileURL(FIXTURE).href}/.github/skills/code-style/SKILL.md`,
+      '[commit]s — Write [commit] messages the way this repository does.',
+      `  ${pathToFileURL(FIXTURE).href}/.claude/skills/[commit]s/SKILL.md`,
+    ].join('\n'),
+  );
+
+  // Without --filter, nothing is highlighted.
+  assert.equal((await atlas(['scan', FIXTURE], marked)).stdout, fixture.stdout);
+});
+
+test('the CLI highlights matches black on yellow where it shows colors, and not otherwise', () => {
+  const { FORCE_COLOR, NO_COLOR, ...env } = process.env;
+  const colored = spawnSync(process.execPath, [CLI, 'scan', FIXTURE, '--filter', 'commits'], { env: { ...env, FORCE_COLOR: '1' }, encoding: 'utf8' });
+  assert.equal(colored.status, 0, colored.stderr);
+  const yellow = (text: string) => `\x1b[30m\x1b[43m${text}\x1b[49m\x1b[39m`;
+  assert.equal(
+    colored.stdout.split('\n')[1],
+    `${yellow('commits')} — Write commit messages the way this repository does.`,
+  );
+
+  const plain = spawnSync(process.execPath, [CLI, 'scan', FIXTURE, '--filter', 'commits'], { env: { ...env, NO_COLOR: '1' }, encoding: 'utf8' });
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.doesNotMatch(plain.stdout, /\x1b/);
+  assert.match(plain.stdout, /^fixture · 1 of 4 skills matches "commits"\ncommits — /);
+});
+
+test('--filter without a text, or twice → the usage, exit code 1', async () => {
+  for (const args of [
+    ['scan', FIXTURE, '--filter'],
+    ['scan', FIXTURE, '--filter='],
+    ['scan', FIXTURE, '--filter', 'a', '--filter', 'b'],
+    ['scan', FIXTURE, '--filter', '--filter=x'],
+    ['scan', FIXTURE, '--filter', '--filter', 'x'],
+    ['scan', '--filter', 'a'],
+  ]) {
+    const failed = await atlas(args);
+    assert.equal(failed.code, 1, args.join(' '));
+    assert.equal(failed.stdout, '');
+    assert.match(failed.stderr, /Usage: skill-atlas scan <GitHub URL \| directory> \[--filter <text>\]$/);
+  }
+  assert.match((await atlas(['help'])).stdout, /--filter <text>/);
+});
+
+test('the browser terminal takes a quoted --filter with spaces', async () => {
+  const tree = `https://api.github.com/repos/JetBrains/example/git/trees/${EXAMPLE_COMMIT}?recursive=1`;
+  const browser = createBrowserBackend({
+    fetch: replay({
+      'https://api.github.com/repos/JetBrains/example': { status: 200, body: { full_name: 'JetBrains/example', default_branch: 'main' } },
+      'https://api.github.com/repos/JetBrains/example/commits/main': { status: 200, body: { sha: EXAMPLE_COMMIT } },
+      [tree]: { status: 200, body: { truncated: false, tree: [{ path: '.claude/skills/commits/SKILL.md', mode: '100644', type: 'blob', sha: 'x' }] } },
+      [`https://raw.githubusercontent.com/JetBrains/example/${EXAMPLE_COMMIT}/.claude/skills/commits/SKILL.md`]: {
+        status: 200,
+        body: '---\nname: commits\ndescription: Write commit messages the way this repository does.\n---\n',
+      },
+    }),
+  });
+  for (const filter of ['--filter "commit messages"', "--filter 'commit messages'", '--filter="commit messages"', "--filter='commit messages'"]) {
+    const output = await browser.run(`$ skill-atlas scan github.com/JetBrains/example ${filter}`);
+    assert.match(output, /^JetBrains\/example · 1 of 1 skill matches "commit messages"\ncommits — /);
+  }
+  assert.match(await browser.run('scan github.com/JetBrains/example --filter "no such text"'), /· 0 of 1 skill match "no such text"$/);
+  assert.match(await browser.run('scan github.com/JetBrains/example --filter ""'), /^--filter needs a text\n/);
 });

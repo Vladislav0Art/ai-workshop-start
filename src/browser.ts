@@ -27,9 +27,15 @@ export function createBrowserBackend(options: BrowserOptions = {}) {
   };
 }
 
-/** The words of a command line; the leading `$` and `skill-atlas` are optional. */
+/**
+ * The words of a command line; the leading `$` and `skill-atlas` are optional. Quotes, single or
+ * double, keep a word's spaces: `--filter "code style"`, `--filter="code style"`.
+ */
 function words(commandLine: string): string[] {
-  const words = commandLine.trim().split(/\s+/).filter(Boolean);
+  // A word is pieces, quoted or not, with no space between: `--filter="code style"` is one.
+  const words = [...commandLine.matchAll(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)].map((match) =>
+    match[0].replace(/"([^"]*)"|'([^']*)'/g, '$1$2'),
+  );
   if (words[0] === '$') words.shift();
   if (words[0] === 'skill-atlas') words.shift();
   return words;

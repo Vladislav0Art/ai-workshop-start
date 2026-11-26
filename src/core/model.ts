@@ -29,8 +29,13 @@ export type Skill = {
  * `https://github.com/<owner>/<repo>/blob/<commit>/<path>`; in a local directory, the file itself.
  */
 export function skillLink(repository: Repository, skill: Skill): string {
-  const path = skill.path.split('/').map(encodeURIComponent).join('/');
+  const path = encodePath(skill.path);
   return skill.commit ? `${repository.url}/blob/${skill.commit}/${path}` : `${repository.url}/${path}`;
+}
+
+/** A path, or a branch, in a URL: each segment URL-encoded, the slashes kept. */
+export function encodePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
 }
 
 /** By name, then by path: the same order everywhere, whatever the locale. */
