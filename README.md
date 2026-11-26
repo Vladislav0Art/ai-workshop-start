@@ -13,7 +13,7 @@ build-tools-bump-gradle-api — Bumps the Gradle API version that Kotlin Gradle 
 …
 ```
 
-`--filter <text>` keeps only the skills with the text in their name, description, link or copies, and
+`--filter <text>` keeps only the skills with the text in their name, description, path or copies, and
 highlights it. Set `GITHUB_TOKEN` for a higher GitHub rate limit. `npm test` runs the tests.
 
 - [spec/](spec/): what it does. [AGENTS.md](AGENTS.md): the definition of done.

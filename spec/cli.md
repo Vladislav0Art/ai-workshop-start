@@ -12,7 +12,8 @@ build-tools-bump-gradle-api — Bumps the Gradle API…
 - `also in <paths>` for copies; warnings go to *stderr*
 ## Filter
 `--filter <text>` (or `--filter=<text>`): only the skills with the text in **any text field**:
-the name, the *whole* description, the link, the copies.
+the name, the *whole* description, the path, the copies. Not the rest of the link: the host,
+the owner, the commit, the checkout's directory match no skill.
 ```
 JetBrains/kotlin · 2 of 6 skills match "gradle"
 ```

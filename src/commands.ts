@@ -18,7 +18,7 @@ const usage = `Usage: skill-atlas <command>
 
   scan <GitHub URL | directory>   find every SKILL.md in a repository and print it
     --filter <text>               only the skills with the text in their name, description,
-                                  link or copies; the matches are highlighted
+                                  path or copies; the matches are highlighted
   help                            show this help`;
 
 /** Runs one command; returns its exit code. */
@@ -73,7 +73,7 @@ function printRepository(repository: Repository, skills: Skill[], context: Conte
     for (const texts of all) printSkill({ ...texts, description: firstSentence(texts.description) }, context.print);
     return;
   }
-  const shown = all.filter((texts) => Object.values(texts).some((text) => matches(text, filter)));
+  const shown = all.filter(({ link, ...texts }) => Object.values(texts).some((text) => matches(text, filter)));
   context.print(`${repository.id} · ${shown.length} of ${count} ${shown.length === 1 ? 'matches' : 'match'} ${JSON.stringify(filter)}`);
   const mark = context.highlight;
   const marked = (text: string) => (mark ? text.replace(pattern(filter), (match) => mark(match)) : text);
@@ -81,19 +81,25 @@ function printRepository(repository: Repository, skills: Skill[], context: Conte
     // The whole description when the text is in it, but not in its first sentence.
     const sentence = firstSentence(texts.description);
     const description = matches(texts.description, filter) && !matches(sentence, filter) ? texts.description : sentence;
-    printSkill({ name: marked(texts.name), description: marked(description), link: marked(texts.link), copies: marked(texts.copies) }, context.print);
+    // In the link, only the path is searched, so only the path is highlighted.
+    const link = mark ? texts.link.slice(0, -encodePath(texts.path).length) + markedPath(texts.path, filter, mark) : texts.link;
+    printSkill({ ...texts, name: marked(texts.name), description: marked(description), link, copies: marked(texts.copies) }, context.print);
   }
 }
 
-/** What a skill is printed with, and what `--filter` looks in. */
-type SkillTexts = { name: string; description: string; link: string; copies: string };
+/**
+ * What a skill is printed with. `--filter` looks in all but the link: in its path instead, so
+ * that the host, the owner, the commit or the checkout's directory match no skill.
+ */
+type SkillTexts = { name: string; description: string; path: string; copies: string; link: string };
 
 function skillTexts(repository: Repository, skill: Skill): SkillTexts {
   return {
     name: skill.name,
     description: skill.description.replace(/\s+/g, ' ').trim(),
-    link: skillLink(repository, skill),
+    path: skill.path,
     copies: skill.copies.join(', '),
+    link: skillLink(repository, skill),
   };
 }
 
@@ -101,6 +107,22 @@ function printSkill({ name, description, link, copies }: SkillTexts, print: Cont
   print(description ? `${name} — ${description}` : name);
   print(`  ${link}`);
   if (copies) print(`  also in ${copies}`);
+}
+
+/** As the link writes the path, the matches marked. */
+function markedPath(path: string, filter: string, mark: (text: string) => string): string {
+  let result = '';
+  let end = 0;
+  for (const match of path.matchAll(pattern(filter))) {
+    result += encodePath(path.slice(end, match.index)) + mark(encodePath(match[0]));
+    end = match.index + match[0].length;
+  }
+  return result + encodePath(path.slice(end));
+}
+
+/** As `skillLink` writes a path: each segment URL-encoded. */
+function encodePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
 }
 
 /** The filter, as plain text, in any case. */

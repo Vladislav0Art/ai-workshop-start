@@ -3,7 +3,7 @@
 // where skills live are yours to add.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -124,17 +124,43 @@ test('--filter looks in the whole description, and prints it whole when the text
   );
 });
 
-test('--filter looks in the link', async () => {
-  const filtered = await atlas(['scan', FIXTURE, '--filter', '.agents/']);
+test('--filter looks in the path, and highlights only the path in the link', async () => {
+  const filtered = await atlas(['scan', FIXTURE, '--filter', '.agents/'], marked);
   assert.equal(filtered.code, 0, filtered.stderr);
   assert.equal(
     filtered.stdout,
-    ['fixture · 1 of 3 skills matches ".agents/"', 'release-checklist', `  ${pathToFileURL(FIXTURE).href}/.agents/skills/release-checklist/SKILL.md`].join('\n'),
+    ['fixture · 1 of 3 skills matches ".agents/"', 'release-checklist', `  ${pathToFileURL(FIXTURE).href}/[.agents/]skills/release-checklist/SKILL.md`].join('\n'),
   );
 
-  const example = await atlas(['scan', 'github.com/JetBrains/example', '--filter', EXAMPLE_COMMIT.slice(0, 7)]);
+  const example = await atlas(['scan', 'github.com/JetBrains/example', '--filter', 'claude/skills'], marked);
   assert.equal(example.code, 0, example.stderr);
-  assert.match(example.stdout, /^JetBrains\/example · 1 of 1 skill matches "5ab6270"\ncommits — /);
+  assert.equal(
+    example.stdout,
+    [
+      'JetBrains/example · 1 of 1 skill matches "claude/skills"',
+      'commits — Write commit messages the way this repository does.',
+      `  https://github.com/JetBrains/example/blob/${EXAMPLE_COMMIT}/.[claude/skills]/commits/SKILL.md`,
+    ].join('\n'),
+  );
+});
+
+test('--filter does not look in the rest of the link: the host, the owner, the commit, the directory', async () => {
+  for (const filter of ['github', 'JetBrains', 'blob', EXAMPLE_COMMIT.slice(0, 7), 'ab']) {
+    const example = await atlas(['scan', 'github.com/JetBrains/example', '--filter', filter]);
+    assert.equal(example.stdout, `JetBrains/example · 0 of 1 skill match ${JSON.stringify(filter)}`);
+  }
+  // The x of "fixture", the scanned directory.
+  assert.equal((await atlas(['scan', FIXTURE, '--filter', 'x'])).stdout, 'fixture · 0 of 3 skills match "x"');
+});
+
+test('--filter highlights a path as the link writes it, URL-encoded', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'skill-atlas-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, '.claude/skills/my skill'), { recursive: true });
+  writeFileSync(join(root, '.claude/skills/my skill/SKILL.md'), '---\nname: spaced\ndescription: A skill.\n---\n');
+  const filtered = await atlas(['scan', root, '--filter', 'my skill'], marked);
+  assert.equal(filtered.code, 0, filtered.stderr);
+  assert.equal(filtered.stdout.split('\n')[2], `  ${pathToFileURL(root).href}/.claude/skills/[my%20skill]/SKILL.md`);
 });
 
 test('--filter is plain text: no match → no skills, exit code 0', async () => {
