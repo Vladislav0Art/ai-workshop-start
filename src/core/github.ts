@@ -7,20 +7,29 @@ export type Fetch = (url: string, init?: { headers?: Record<string, string> }) =
 
 export type GitHubOptions = {
   fetch: Fetch;
-  /** With a token, skills are found through code search; without it, through the tree. */
+  /**
+   * With a token, skills on the default branch are found through code search, and a tree too
+   * large for one answer is listed a subtree at a time; without it, through the tree.
+   */
   token?: string;
 };
 
 const API = 'https://api.github.com';
 const RAW = 'https://raw.githubusercontent.com';
 
-/** `https://github.com/owner/repo`, with or without the scheme, a trailing slash or `.git`. */
-export function parseGitHubUrl(input: string): { owner: string; repo: string } | undefined {
-  const match = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i.exec(input.trim());
-  return match ? { owner: match[1], repo: match[2] } : undefined;
+/**
+ * `https://github.com/owner/repo`, with or without the scheme, a trailing slash or `.git`;
+ * `…/tree/<commit>` for a commit, or a branch, of one's own.
+ */
+export function parseGitHubUrl(input: string): { owner: string; repo: string; ref?: string } | undefined {
+  const match = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/tree\/(.+?))?\/?$/i.exec(
+    input.trim(),
+  );
+  if (!match) return undefined;
+  return match[3] ? { owner: match[1], repo: match[2], ref: match[3] } : { owner: match[1], repo: match[2] };
 }
 
-/** Resolves the default branch to a commit and lists the files that may be skills. */
+/** Resolves the commit in the URL, else the default branch, and lists the files that may be skills. */
 export async function openGitHub(input: string, options: GitHubOptions): Promise<Source> {
   const name = parseGitHubUrl(input);
   if (!name) throw new AtlasError(`Not a GitHub repository URL: ${input}`);
@@ -30,11 +39,17 @@ export async function openGitHub(input: string, options: GitHubOptions): Promise
     `Repository not found: https://github.com/${name.owner}/${name.repo}`,
   );
   const id = info.full_name;
-  const { sha } = await github.json<{ sha: string }>(`${API}/repos/${id}/commits/${encodePath(info.default_branch)}`);
+  const ref = name.ref ?? info.default_branch;
+  const { sha } = await github.json<{ sha: string }>(
+    `${API}/repos/${id}/commits/${encodePath(ref)}`,
+    `Not found in https://github.com/${id}: ${ref}`,
+  );
   const warnings: string[] = [];
-  const paths = options.token
-    ? await withoutLinks(github, id, sha, await searchPaths(github, id))
-    : await treePaths(github, id, sha, warnings);
+  // Code search sees only the default branch's latest commit; any other is listed through its tree.
+  const paths =
+    options.token && !name.ref
+      ? await withoutLinks(github, id, sha, await searchPaths(github, id))
+      : await treePaths(github, id, sha, warnings, Boolean(options.token));
   const [organization, repo] = id.split('/');
   return {
     repository: { id, organization, name: repo, url: `https://github.com/${id}`, commit: sha },
@@ -81,10 +96,14 @@ const LINK = '120000';
 
 type Tree = { truncated: boolean; tree: { path: string; mode: string; type: string; sha: string }[] };
 
-/** The whole tree at once, or only the skill roots when it is too large for one answer. */
-async function treePaths(github: Client, id: string, sha: string, warnings: string[]): Promise<string[]> {
+/**
+ * The whole tree at once. When it is too large for one answer: `split`, a subtree at a time;
+ * else only the skill roots, which costs fewer requests.
+ */
+async function treePaths(github: Client, id: string, sha: string, warnings: string[], split: boolean): Promise<string[]> {
   const tree = await github.json<Tree>(`${API}/repos/${id}/git/trees/${sha}?recursive=1`);
   if (!tree.truncated) return files(tree);
+  if (split) return subtreePaths(github, id, sha, '');
   warnings.push(`the tree is too large to list at once; looked only in ${SKILL_ROOTS.join(', ')} (GITHUB_TOKEN searches everywhere)`);
   const paths: string[] = [];
   for (const root of SKILL_ROOTS) {
@@ -94,6 +113,21 @@ async function treePaths(github: Client, id: string, sha: string, warnings: stri
     paths.push(...files(subtree).map((path) => `${root}/${path}`));
   }
   return paths;
+}
+
+/** One level of a tree, then each subtree at once; a subtree too large for one answer is split again. */
+async function subtreePaths(github: Client, id: string, sha: string, prefix: string): Promise<string[]> {
+  const level = await github.json<Tree>(`${API}/repos/${id}/git/trees/${sha}`);
+  const lists = await Promise.all(
+    level.tree.map(async (item) => {
+      const path = `${prefix}${item.path}`;
+      if (item.type !== 'tree') return item.type === 'blob' && item.mode !== LINK ? [path] : [];
+      const subtree = await github.json<Tree>(`${API}/repos/${id}/git/trees/${item.sha}?recursive=1`);
+      if (subtree.truncated) return subtreePaths(github, id, item.sha, `${path}/`);
+      return files(subtree).map((file) => `${path}/${file}`);
+    }),
+  );
+  return lists.flat();
 }
 
 /** Walks down one level at a time; the directory's tree, or undefined if it does not exist. */
@@ -135,7 +169,8 @@ function client({ fetch, token }: GitHubOptions) {
     const body: unknown = await response.json().catch(() => undefined);
     const message = (body as { message?: unknown } | undefined)?.message;
     const text = typeof message === 'string' ? message : '';
-    if (response.status === 404) {
+    // 422: no such commit, branch or tag.
+    if (response.status === 404 || (response.status === 422 && /no commit found/i.test(text))) {
       if (notFound === undefined) return undefined;
       throw new AtlasError(notFound);
     }

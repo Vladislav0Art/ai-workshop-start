@@ -11,7 +11,7 @@ import { findSkills } from '../src/core/find.ts';
 import { openGitHub } from '../src/core/github.ts';
 import { parseSkill } from '../src/core/parse.ts';
 import { replay } from '../src/core/replay.ts';
-import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE } from './helpers.ts';
+import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE, PINNED_COMMIT } from './helpers.ts';
 
 const fixture = await atlas(['scan', FIXTURE]);
 const example = await atlas(['scan', 'github.com/JetBrains/example']);
@@ -97,6 +97,26 @@ test('skills in test directories are test data, not listed; a skill named like o
   for (const path of ['.claude/skills/tests/SKILL.md', '.agents/skills/writing-tests/SKILL.md', 'contest/skills/x/SKILL.md', 'latest/x/SKILL.md']) {
     assert.equal(findSkills([path], 'repo').length, 1, path);
   }
+});
+
+test('<URL>/tree/<commit> → that commit, through its tree, a subtree at a time when too large', async () => {
+  const pinned = await atlas(['scan', `https://github.com/JetBrains/pinned/tree/${PINNED_COMMIT}`]);
+  assert.equal(pinned.code, 0, pinned.stderr);
+  assert.equal(pinned.stderr, '');
+  assert.equal(
+    pinned.stdout,
+    [
+      'JetBrains/pinned · 2 skills',
+      'commits — Write commit messages the way this repository does.',
+      `  https://github.com/JetBrains/pinned/blob/${PINNED_COMMIT}/.claude/skills/commits/SKILL.md`,
+      'search — Search the code through MCP.',
+      `  https://github.com/JetBrains/pinned/blob/${PINNED_COMMIT}/modules/mcp/skills/search/SKILL.md`,
+    ].join('\n'),
+  );
+
+  const unknown = await atlas(['scan', 'https://github.com/JetBrains/pinned/tree/no-such-branch']);
+  assert.equal(unknown.code, 1);
+  assert.equal(unknown.stderr, 'Not found in https://github.com/JetBrains/pinned: no-such-branch');
 });
 
 test('the CLI prints the result at once and stores nothing', (t) => {

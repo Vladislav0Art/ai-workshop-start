@@ -1,4 +1,4 @@
-// Runs the commands the way the CLI does, with GitHub answering from EXAMPLE and LINKED below.
+// Runs the commands the way the CLI does, with GitHub answering from the recordings below.
 import { fileURLToPath } from 'node:url';
 import { run } from '../src/commands.ts';
 import { openGitHub, parseGitHubUrl } from '../src/core/github.ts';
@@ -65,9 +65,54 @@ const LINKED: Recording = {
   },
 };
 
-const github = replay({ ...EXAMPLE, ...LINKED });
+/** The commit scanned in JetBrains/pinned: not the default branch's latest. */
+export const PINNED_COMMIT = 'c0ffee0000000000000000000000000000000000';
 
-/** `skill-atlas <args>`, as the CLI runs it, with GitHub answering from EXAMPLE and LINKED. */
+const API = 'https://api.github.com/repos/JetBrains/pinned';
+const entry = (path: string, type: string, sha = '0', mode = type === 'tree' ? '040000' : '100644') => ({ path, type, sha, mode });
+const listing = (truncated: boolean, ...tree: ReturnType<typeof entry>[]) => ({ status: 200, body: { truncated, tree } });
+
+/**
+ * JetBrains/pinned at PINNED_COMMIT: a tree too large for one answer, and so is its `modules`
+ * subtree. A skill in .claude, one deep in modules, and a symbolic link next to it.
+ */
+const PINNED: Recording = {
+  [API]: { status: 200, body: { full_name: 'JetBrains/pinned', default_branch: 'main' } },
+  [`${API}/commits/${PINNED_COMMIT}`]: { status: 200, body: { sha: PINNED_COMMIT } },
+  [`${API}/commits/no-such-branch`]: { status: 422, body: { message: 'No commit found for SHA: no-such-branch' } },
+  [`${API}/git/trees/${PINNED_COMMIT}?recursive=1`]: listing(true),
+  [`${API}/git/trees/${PINNED_COMMIT}`]: listing(
+    false,
+    entry('.claude', 'tree', 'claude'),
+    entry('modules', 'tree', 'modules'),
+    entry('README.md', 'blob'),
+  ),
+  [`${API}/git/trees/claude?recursive=1`]: listing(
+    false,
+    entry('skills', 'tree'),
+    entry('skills/commits', 'tree'),
+    entry('skills/commits/SKILL.md', 'blob'),
+  ),
+  [`${API}/git/trees/modules?recursive=1`]: listing(true),
+  [`${API}/git/trees/modules`]: listing(false, entry('mcp', 'tree', 'mcp')),
+  [`${API}/git/trees/mcp?recursive=1`]: listing(
+    false,
+    entry('skills/search/SKILL.md', 'blob'),
+    entry('skills/linked/SKILL.md', 'blob', '0', '120000'),
+  ),
+  [`https://raw.githubusercontent.com/JetBrains/pinned/${PINNED_COMMIT}/.claude/skills/commits/SKILL.md`]: {
+    status: 200,
+    body: '---\nname: commits\ndescription: Write commit messages the way this repository does.\n---\n',
+  },
+  [`https://raw.githubusercontent.com/JetBrains/pinned/${PINNED_COMMIT}/modules/mcp/skills/search/SKILL.md`]: {
+    status: 200,
+    body: '---\nname: search\ndescription: Search the code through MCP.\n---\n',
+  },
+};
+
+const github = replay({ ...EXAMPLE, ...LINKED, ...PINNED });
+
+/** `skill-atlas <args>`, as the CLI runs it, with GitHub answering from the recordings above. */
 export async function atlas(args: string[]) {
   const stdout: string[] = [];
   const stderr: string[] = [];
