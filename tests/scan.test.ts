@@ -244,9 +244,10 @@ test('the browser terminal takes a quoted --filter with spaces', async () => {
       },
     }),
   });
-  for (const quoted of ['"commit messages"', "'commit messages'"]) {
-    const output = await browser.run(`$ skill-atlas scan github.com/JetBrains/example --filter ${quoted}`);
+  for (const filter of ['--filter "commit messages"', "--filter 'commit messages'", '--filter="commit messages"', "--filter='commit messages'"]) {
+    const output = await browser.run(`$ skill-atlas scan github.com/JetBrains/example ${filter}`);
     assert.match(output, /^JetBrains\/example · 1 of 1 skill matches "commit messages"\ncommits — /);
   }
   assert.match(await browser.run('scan github.com/JetBrains/example --filter "no such text"'), /· 0 of 1 skill match "no such text"$/);
+  assert.match(await browser.run('scan github.com/JetBrains/example --filter ""'), /^--filter needs a text\n/);
 });
