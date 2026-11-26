@@ -1,5 +1,5 @@
 // The decisions in spec/analysis.md and spec/cli.md, checked on what the real command prints for
-// ./fixture and for a small GitHub repository answered in tests/helpers.ts.
+// ./fixture and for small GitHub repositories answered in tests/helpers.ts.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -15,6 +15,7 @@ import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE } from './helpers.ts';
 
 const fixture = await atlas(['scan', FIXTURE]);
 const example = await atlas(['scan', 'github.com/JetBrains/example']);
+const linked = await atlas(['scan', 'github.com/JetBrains/linked']);
 
 test('malformed front matter → the directory name, no description and a warning', () => {
   const parsed = parseSkill(readFileSync(join(FIXTURE, '.agents/skills/release-checklist/SKILL.md'), 'utf8'));
@@ -59,9 +60,25 @@ test('./fixture: every skill, sorted by name, linked to its file, with a warning
   assert.match(fixture.stderr, /^warning: \.agents\/skills\/release-checklist\/SKILL\.md: malformed front matter: /);
 });
 
+test('symbolic link → only the file it points to', () => {
+  // ./fixture links .claude/skills/code-style/SKILL.md and the directory .agents/skills/commits.
+  assert.doesNotMatch(fixture.stdout, /\.claude\/skills\/code-style|\.agents\/skills\/commits/);
+  // GitHub code search finds a linked SKILL.md as well; its directory's tree says it is a link.
+  assert.equal(linked.code, 0, linked.stderr);
+  assert.equal(linked.stderr, '');
+  assert.equal(
+    linked.stdout,
+    [
+      'JetBrains/linked · 1 skill',
+      "code-style — Follow the project's code style.",
+      `  https://github.com/JetBrains/linked/blob/${EXAMPLE_COMMIT}/.github/skills/code-style/SKILL.md`,
+    ].join('\n'),
+  );
+});
+
 test('skills in test directories are test data, not listed; a skill named like one is', () => {
-  // ./fixture: src/jvmTest/… and plugins/markdown/test/testData/….
-  assert.doesNotMatch(fixture.stdout, /sample|jvmTest|testData/);
+  // ./fixture: src/jvmTest/… and plugins/markdown/test/testData/…; JetBrains/linked: src/jvmTest/….
+  for (const output of [fixture.stdout, linked.stdout]) assert.doesNotMatch(output, /sample|jvmTest|testData/);
   assert.match(fixture.stdout, /^tests — /m);
   for (const path of [
     'src/test/resources/skills/x/SKILL.md',

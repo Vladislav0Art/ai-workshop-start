@@ -32,7 +32,9 @@ export async function openGitHub(input: string, options: GitHubOptions): Promise
   const id = info.full_name;
   const { sha } = await github.json<{ sha: string }>(`${API}/repos/${id}/commits/${encodePath(info.default_branch)}`);
   const warnings: string[] = [];
-  const paths = options.token ? await searchPaths(github, id) : await treePaths(github, id, sha, warnings);
+  const paths = options.token
+    ? await withoutLinks(github, id, sha, await searchPaths(github, id))
+    : await treePaths(github, id, sha, warnings);
   const [organization, repo] = id.split('/');
   return {
     repository: { id, organization, name: repo, url: `https://github.com/${id}`, commit: sha },
@@ -55,6 +57,27 @@ async function searchPaths(github: Client, id: string): Promise<string[]> {
   }
   return [...paths];
 }
+
+/**
+ * Code search finds symbolic links too, and cannot tell them apart: each SKILL.md's directory
+ * tree, at the commit, says which ones are. The directories are asked for at the same time.
+ */
+async function withoutLinks(github: Client, id: string, sha: string, paths: string[]): Promise<string[]> {
+  const kept = await Promise.all(
+    paths.map(async (path) => {
+      const slash = path.lastIndexOf('/');
+      const tree = slash < 0 ? sha : `${sha}:${encodePath(path.slice(0, slash))}`;
+      // Not at the scanned commit: kept, and reading it says so.
+      const listing = await github.optional<Tree>(`${API}/repos/${id}/git/trees/${tree}`);
+      const name = path.slice(slash + 1);
+      return listing?.tree.some((item) => item.path === name && item.mode === LINK) ? [] : [path];
+    }),
+  );
+  return kept.flat();
+}
+
+/** A symbolic link's mode in a Git tree. */
+const LINK = '120000';
 
 type Tree = { truncated: boolean; tree: { path: string; mode: string; type: string; sha: string }[] };
 
@@ -87,7 +110,7 @@ async function directory(github: Client, id: string, sha: string, path: string):
 
 /** Regular files only: a symbolic link's content is its target, not a SKILL.md. */
 function files(tree: Tree): string[] {
-  return tree.tree.filter((item) => item.type === 'blob' && item.mode !== '120000').map((item) => item.path);
+  return tree.tree.filter((item) => item.type === 'blob' && item.mode !== LINK).map((item) => item.path);
 }
 
 type Client = ReturnType<typeof client>;
@@ -105,13 +128,17 @@ function client({ fetch, token }: GitHubOptions) {
     }
   }
 
-  async function request(url: string, notFound: string): Promise<unknown> {
+  /** Without `notFound`, a 404 is undefined. */
+  async function request(url: string, notFound?: string): Promise<unknown> {
     const response = await get(url, { headers });
     if (response.ok) return response.json();
     const body: unknown = await response.json().catch(() => undefined);
     const message = (body as { message?: unknown } | undefined)?.message;
     const text = typeof message === 'string' ? message : '';
-    if (response.status === 404) throw new AtlasError(notFound);
+    if (response.status === 404) {
+      if (notFound === undefined) return undefined;
+      throw new AtlasError(notFound);
+    }
     if ((response.status === 403 || response.status === 429) && /rate limit/i.test(text)) {
       throw new AtlasError(`GitHub rate limit reached; ${token ? 'try again in a minute' : 'set GITHUB_TOKEN'}`);
     }
@@ -124,6 +151,12 @@ function client({ fetch, token }: GitHubOptions) {
     json<T>(url: string, notFound = `Not found on GitHub: ${url}`): Promise<T> {
       if (!answers.has(url)) answers.set(url, request(url, notFound));
       return answers.get(url) as Promise<T>;
+    },
+    /** A GitHub API answer, or undefined for a 404. */
+    optional<T>(url: string): Promise<T | undefined> {
+      const key = `optional ${url}`;
+      if (!answers.has(key)) answers.set(key, request(url));
+      return answers.get(key) as Promise<T | undefined>;
     },
     /** A file's bytes at the scanned commit, or undefined if it is not there. */
     async raw(url: string): Promise<Uint8Array | undefined> {
