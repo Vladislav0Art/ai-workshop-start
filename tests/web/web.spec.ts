@@ -50,12 +50,16 @@ function fixture(): Recording {
   return repository('JetBrains/fixture', files, { links });
 }
 
-/** GitHub, for this page, answers from the recording; anything else does not reach the network. */
+/**
+ * GitHub, for this page, answers from the recording; anything else does not reach the network.
+ * Each request comes back with the Authorization header it carried, if any.
+ */
 async function github(page: Page, recording: Recording) {
-  const requests: string[] = [];
+  const requests: { url: string; authorization?: string }[] = [];
   await page.route(/^https:\/\/(api\.github\.com|raw\.githubusercontent\.com)\//, async (route) => {
     const url = route.request().url();
-    requests.push(url);
+    const authorization = await route.request().headerValue('authorization');
+    requests.push(authorization ? { url, authorization } : { url });
     const answer = recording[url];
     if (!answer) return route.abort('internetdisconnected');
     await route.fulfill({
@@ -67,9 +71,10 @@ async function github(page: Page, recording: Recording) {
   return requests;
 }
 
-async function scan(page: Page, url: string) {
+async function scan(page: Page, url: string, token?: string) {
   await page.goto('/');
   await page.getByLabel('GitHub repository URL').fill(url);
+  if (token) await page.getByLabel('GitHub token').fill(token);
   await page.getByRole('button', { name: 'Scan' }).click();
 }
 
@@ -183,5 +188,37 @@ test('rate limit → a clear message', async ({ page }) => {
     [`${API}/JetBrains/MPS`]: { status: 403, body: { message: 'API rate limit exceeded for 192.0.2.1.' } },
   });
   await scan(page, 'https://github.com/JetBrains/MPS');
-  await expect(errorBox(page)).toContainText('GitHub rate limit reached');
+  await expect(errorBox(page)).toContainText('GitHub rate limit reached; paste a GitHub token');
+});
+
+test('a pasted token → API requests carry it, through the tree: a browser cannot call code search', async ({ page }) => {
+  // A private repository: raw.githubusercontent.com does not know it, the API with the token does.
+  const id = 'JetBrains/private';
+  const path = '.claude/skills/commits/SKILL.md';
+  const recording = repository(id, {});
+  recording[`${API}/${id}/git/trees/${COMMIT}?recursive=1`] = {
+    status: 200,
+    body: { truncated: false, tree: [{ path, mode: '100644', type: 'blob', sha: 'x' }] },
+  };
+  recording[`${RAW}/${id}/${COMMIT}/${path}`] = { status: 404, body: '404: Not Found' };
+  recording[`${API}/${id}/contents/${path}?ref=${COMMIT}`] = {
+    status: 200,
+    body: '---\nname: commits\ndescription: Write commit messages.\n---\n',
+  };
+  const requests = await github(page, recording);
+  await scan(page, `https://github.com/${id}`, 'github_pat_secret');
+  await expect(page.getByTestId('skill').getByRole('heading')).toHaveText(['commits']);
+  await expect(page.getByLabel('GitHub token')).toHaveAttribute('type', 'password');
+
+  expect(requests.some((request) => request.url.includes('/search/'))).toBe(false);
+  const api = requests.filter((request) => request.url.startsWith('https://api.github.com/'));
+  expect(api.map((request) => request.authorization)).toEqual(api.map(() => 'Bearer github_pat_secret'));
+  // raw.githubusercontent.com is not GitHub's API: the token stays out of it.
+  expect(requests.filter((request) => request.url.startsWith(RAW))).toEqual([{ url: `${RAW}/${id}/${COMMIT}/${path}` }]);
+
+  expect(page.url()).not.toContain('github_pat_secret');
+  const { cookies, origins } = await page.context().storageState();
+  expect(cookies).toEqual([]);
+  expect(origins).toEqual([]);
+  expect(await page.evaluate('sessionStorage.length')).toBe(0);
 });

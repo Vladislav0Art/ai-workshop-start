@@ -17,7 +17,8 @@ build-tools-bump-gradle-api — Bumps the Gradle API version that Kotlin Gradle 
 
 Set `GITHUB_TOKEN` for a higher GitHub rate limit.
 
-The same in a page: `npm run web`, open http://localhost:5173 and paste a repository link
+The same in a page: `npm run web`, open http://localhost:5173 and paste a repository link, and a GitHub
+token if you hit the rate limit or the repository is private
 (React, TypeScript and [shadcn/ui](https://ui.shadcn.com), in [web/](web/)). `npm run build` puts it in `web/dist`.
 
 `npm test` runs the tests; the first time, `npx playwright install chromium` for the web view's. `npm run test:e2e`, with

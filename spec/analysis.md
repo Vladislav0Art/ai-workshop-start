@@ -17,5 +17,6 @@ Skill: id = `repo:path`, name, description, commit
 - Listing: *code search* for the default branch (with `GITHUB_TOKEN`), else the commit's *tree*;
   a tree too large for one answer goes subtree by subtree (with a token), or only the skill roots
 - Unknown commit → a clear message, exit code 1
+- Private repository (with a token): files are read through the API, raw GitHub does not serve them
 - Malformed front matter → a *warning*, the scan goes on
 - Unreachable repository → a clear message, exit code 1

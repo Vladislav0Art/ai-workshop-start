@@ -8,10 +8,13 @@ export type Fetch = (url: string, init?: { headers?: Record<string, string> }) =
 export type GitHubOptions = {
   fetch: Fetch;
   /**
-   * With a token, skills on the default branch are found through code search, and a tree too
-   * large for one answer is listed a subtree at a time; without it, through the tree.
+   * With a token, skills on the default branch are found through code search, a tree too large
+   * for one answer is listed a subtree at a time, and a private repository's files are read
+   * through the API; without it, through the tree.
    */
   token?: string;
+  /** False in a page: GitHub answers code search without CORS headers, so a browser blocks it. */
+  codeSearch?: boolean;
 };
 
 const API = 'https://api.github.com';
@@ -47,7 +50,7 @@ export async function openGitHub(input: string, options: GitHubOptions): Promise
   const warnings: string[] = [];
   // Code search sees only the default branch's latest commit; any other is listed through its tree.
   const paths =
-    options.token && !name.ref
+    options.token && options.codeSearch !== false && !name.ref
       ? await withoutLinks(github, id, sha, await searchPaths(github, id))
       : await treePaths(github, id, sha, warnings, Boolean(options.token));
   const [organization, repo] = id.split('/');
@@ -55,7 +58,11 @@ export async function openGitHub(input: string, options: GitHubOptions): Promise
     repository: { id, organization, name: repo, url: `https://github.com/${id}`, commit: sha },
     paths,
     warnings,
-    read: (path) => github.raw(`${RAW}/${id}/${sha}/${encodePath(path)}`),
+    // raw.githubusercontent.com costs no API request, but answers 404 for a private repository's
+    // files, and a page cannot send it a token: those are read through the API.
+    read: async (path) =>
+      (await github.raw(`${RAW}/${id}/${sha}/${encodePath(path)}`)) ??
+      (options.token ? github.file(`${API}/repos/${id}/contents/${encodePath(path)}?ref=${sha}`) : undefined),
   };
 }
 
@@ -166,6 +173,10 @@ function client({ fetch, token }: GitHubOptions) {
   async function request(url: string, notFound?: string): Promise<unknown> {
     const response = await get(url, { headers });
     if (response.ok) return response.json();
+    return failure(url, response, notFound);
+  }
+
+  async function failure(url: string, response: Response, notFound?: string): Promise<undefined> {
     const body: unknown = await response.json().catch(() => undefined);
     const message = (body as { message?: unknown } | undefined)?.message;
     const text = typeof message === 'string' ? message : '';
@@ -192,6 +203,12 @@ function client({ fetch, token }: GitHubOptions) {
       const key = `optional ${url}`;
       if (!answers.has(key)) answers.set(key, request(url));
       return answers.get(key) as Promise<T | undefined>;
+    },
+    /** A file's bytes through the API, as they are; undefined for a 404. */
+    async file(url: string): Promise<Uint8Array | undefined> {
+      const response = await get(url, { headers: { ...headers, Accept: 'application/vnd.github.raw+json' } });
+      if (!response.ok) return failure(url, response);
+      return new Uint8Array(await response.arrayBuffer());
     },
     /** A file's bytes at the scanned commit, or undefined if it is not there. */
     async raw(url: string): Promise<Uint8Array | undefined> {

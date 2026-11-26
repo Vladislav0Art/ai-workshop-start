@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { AlertCircle, ExternalLink, FileText, GitCommit, Loader2, Search, TriangleAlert } from 'lucide-react';
+import { AlertCircle, ExternalLink, FileText, GitCommit, KeyRound, Loader2, Search, TriangleAlert } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -14,24 +14,28 @@ type State =
   | { status: 'done'; result: ScanResult }
   | { status: 'error'; message: string };
 
-/** The scanned repository is in the address (`?repo=`), so a result can be shared; nothing is stored. */
+/**
+ * The scanned repository is in the address (`?repo=`), so a result can be shared; nothing is stored.
+ * The token is not in the address either: it lives in its field only, until the page is closed.
+ */
 function repoFromAddress(): string {
   return new URLSearchParams(window.location.search).get('repo') ?? '';
 }
 
 export function App() {
   const [input, setInput] = useState(repoFromAddress);
+  const [token, setToken] = useState('');
   const [state, setState] = useState<State>({ status: 'idle' });
   const latest = useRef(0);
 
-  const run = useCallback(async (repo: string) => {
+  const run = useCallback(async (repo: string, token = '') => {
     const request = ++latest.current;
     setState({ status: 'loading', input: repo });
     const url = new URL(window.location.href);
     url.searchParams.set('repo', repo.trim());
     window.history.replaceState(null, '', url);
     try {
-      const result = await scanRepository(repo);
+      const result = await scanRepository(repo, token);
       if (request === latest.current) setState({ status: 'done', result });
     } catch (error) {
       if (request === latest.current) setState({ status: 'error', message: describeError(error) });
@@ -45,7 +49,7 @@ export function App() {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (input.trim()) void run(input);
+    if (input.trim()) void run(input, token);
   }
 
   return (
@@ -55,19 +59,47 @@ export function App() {
         <p className="text-muted-foreground">Every agent skill in a GitHub repository: paste its link to list each SKILL.md.</p>
       </header>
 
-      <form onSubmit={submit} className="flex gap-2" aria-label="Scan a repository">
-        <Input
-          aria-label="GitHub repository URL"
-          placeholder="https://github.com/JetBrains/kotlin"
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          className="h-10"
-          autoFocus
-        />
-        <Button type="submit" className="h-10" disabled={!input.trim() || state.status === 'loading'}>
-          {state.status === 'loading' ? <Loader2 className="animate-spin" /> : <Search />}
-          Scan
-        </Button>
+      <form onSubmit={submit} className="flex flex-col gap-2" aria-label="Scan a repository">
+        <div className="flex gap-2">
+          <Input
+            aria-label="GitHub repository URL"
+            placeholder="https://github.com/JetBrains/kotlin"
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            className="h-10"
+            autoFocus
+          />
+          <Button type="submit" className="h-10" disabled={!input.trim() || state.status === 'loading'}>
+            {state.status === 'loading' ? <Loader2 className="animate-spin" /> : <Search />}
+            Scan
+          </Button>
+        </div>
+        <div className="relative">
+          <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="password"
+            aria-label="GitHub token"
+            aria-describedby="token-help"
+            placeholder="GitHub token (optional)"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            className="h-10 pl-9 font-mono"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <p id="token-help" className="text-xs text-muted-foreground">
+          Optional: GitHub allows 60 requests an hour without one. A{' '}
+          <a
+            href="https://github.com/settings/personal-access-tokens/new"
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            fine-grained token
+          </a>{' '}
+          with public, read-only access is enough. Sent only to api.github.com; never stored.
+        </p>
       </form>
 
       {state.status === 'loading' && <Loading />}
