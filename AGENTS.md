@@ -7,5 +7,6 @@ Integration tests for every case in the spec.
 - All tests pass locally
 
 ## Commands
+Node 24 or later (`package.json` engines): the CLI and the tests run `.ts` directly.
 - `npm ci`: first, in a fresh checkout
 - `npm test`: the tests
