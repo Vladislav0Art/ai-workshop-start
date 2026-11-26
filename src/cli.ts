@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The Node client: a GitHub repository through the GitHub API, or a local directory; stdout and
 // stderr. Nothing is stored.
+import { styleText } from 'node:util';
 import { run } from './commands.ts';
 import { openGitHub, parseGitHubUrl } from './core/github.ts';
 import { openDirectory } from './local.ts';
@@ -11,4 +12,6 @@ process.exitCode = await run(process.argv.slice(2), {
   open: (input) => (parseGitHubUrl(input) ? openGitHub(input, { fetch, token }) : openDirectory(input)),
   print: (text) => console.log(text),
   error: (text) => console.error(text),
+  // Black on yellow, when stdout shows colors: a terminal, not NO_COLOR, or FORCE_COLOR.
+  highlight: (text) => styleText(['black', 'bgYellow'], text),
 });

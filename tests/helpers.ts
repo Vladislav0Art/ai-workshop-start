@@ -27,8 +27,11 @@ const EXAMPLE: Recording = {
 
 const github = replay(EXAMPLE);
 
-/** `skill-atlas <args>`, as the CLI runs it, with GitHub answering from EXAMPLE. */
-export async function atlas(args: string[]) {
+/**
+ * `skill-atlas <args>`, as the CLI runs it, with GitHub answering from EXAMPLE; `highlight`
+ * marks the matches of `--filter`, as the CLI's colors do.
+ */
+export async function atlas(args: string[], highlight?: (text: string) => string) {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const code = await run(args, {
@@ -36,6 +39,7 @@ export async function atlas(args: string[]) {
     open: (input) => (parseGitHubUrl(input) ? openGitHub(input, { fetch: github, token: 'test' }) : openDirectory(input)),
     print: (text) => stdout.push(text),
     error: (text) => stderr.push(text),
+    highlight,
   });
   return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
 }
