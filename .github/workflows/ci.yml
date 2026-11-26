@@ -1,5 +1,5 @@
-# CI for your Skill Atlas repository: the typecheck, the tests and the CLI itself, on every push
-# and pull request, on a clean machine. A pull request is ready when this is green.
+# CI for your Skill Atlas repository: the typecheck, the tests, the end-to-end tests and the CLI itself,
+# on every push and pull request, on a clean machine. A pull request is ready when this is green.
 name: CI
 on:
   push:
@@ -21,9 +21,27 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # The web view's tests run in a real browser.
+      - run: npx playwright install --with-deps chromium
       - run: npm test
       # The real CLI on the fixture repository, as a user would run it: it must exit 0.
       - name: Smoke test
         run: |
           ./skill-atlas help
           ./skill-atlas scan ./fixture
+      - run: npm run build
+  # The CLI on real repositories at fixed commits, over live GitHub, against tests/e2e/expected.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:e2e
+        env:
+          # The tests are skipped without a token; the job's own is enough to read public repositories.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,7 +1,7 @@
 // The skill-atlas commands. The same code serves the Node CLI and the browser
 // terminal: everything that differs between them comes in through the context.
 import { AtlasError } from './core/errors.ts';
-import { encodePath, skillLink, type Repository, type Skill } from './core/model.ts';
+import { encodePath, firstSentence, skillLink, type Repository, type Skill } from './core/model.ts';
 import { scan, type Source } from './core/scan.ts';
 
 export type Context = {
@@ -16,7 +16,8 @@ export type Context = {
 
 const usage = `Usage: skill-atlas <command>
 
-  scan <GitHub URL | directory>   find every SKILL.md in a repository and print it
+  scan <GitHub URL | directory>   find every SKILL.md in a repository and print it;
+                                  <URL>/tree/<commit> scans that commit
     --filter <text>               only the skills with the text in their name, description,
                                   path or copies; the matches are highlighted
   help                            show this help`;
@@ -132,7 +133,3 @@ function matches(text: string, filter: string): boolean {
   return pattern(filter).test(text);
 }
 
-function firstSentence(text: string): string {
-  const line = text.replace(/\s+/g, ' ').trim();
-  return /^.*?[.!?](?=\s|$)/.exec(line)?.[0] ?? line;
-}

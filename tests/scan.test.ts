@@ -1,6 +1,5 @@
 // The decisions in spec/analysis.md and spec/cli.md, checked on what the real command prints for
-// ./fixture and for a small GitHub repository answered in tests/helpers.ts. The edge cases of
-// where skills live are yours to add.
+// ./fixture and for small GitHub repositories answered in tests/helpers.ts.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -9,13 +8,16 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { createBrowserBackend } from '../src/browser.ts';
+import { findSkills } from '../src/core/find.ts';
 import { openGitHub } from '../src/core/github.ts';
 import { parseSkill } from '../src/core/parse.ts';
+import { scan } from '../src/core/scan.ts';
 import { replay } from '../src/core/replay.ts';
-import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE } from './helpers.ts';
+import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE, PINNED_COMMIT } from './helpers.ts';
 
 const fixture = await atlas(['scan', FIXTURE]);
 const example = await atlas(['scan', 'github.com/JetBrains/example']);
+const linked = await atlas(['scan', 'github.com/JetBrains/linked']);
 
 test('malformed front matter → the directory name, no description and a warning', () => {
   const parsed = parseSkill(readFileSync(join(FIXTURE, '.agents/skills/release-checklist/SKILL.md'), 'utf8'));
@@ -45,16 +47,104 @@ test('./fixture: every skill, sorted by name, linked to its file, with a warning
   assert.equal(
     fixture.stdout,
     [
-      'fixture · 3 skills',
+      'fixture · 4 skills',
       "code-style — Follow the project's code style.",
       `  ${root}/.github/skills/code-style/SKILL.md`,
       'commits — Write commit messages the way this repository does.',
       `  ${root}/.claude/skills/commits/SKILL.md`,
       'release-checklist',
       `  ${root}/.agents/skills/release-checklist/SKILL.md`,
+      'tests — Run the tests before every push.',
+      `  ${root}/.claude/skills/tests/SKILL.md`,
     ].join('\n'),
   );
+  assert.equal(fixture.stderr, fixture.stderr.split('\n')[0]); // the malformed skill's warning only
   assert.match(fixture.stderr, /^warning: \.agents\/skills\/release-checklist\/SKILL\.md: malformed front matter: /);
+});
+
+test('symbolic link → only the file it points to', () => {
+  // ./fixture links .claude/skills/code-style/SKILL.md and the directory .agents/skills/commits.
+  assert.doesNotMatch(fixture.stdout, /\.claude\/skills\/code-style|\.agents\/skills\/commits/);
+  // GitHub code search finds a linked SKILL.md as well; its directory's tree says it is a link.
+  assert.equal(linked.code, 0, linked.stderr);
+  assert.equal(linked.stderr, '');
+  assert.equal(
+    linked.stdout,
+    [
+      'JetBrains/linked · 1 skill',
+      "code-style — Follow the project's code style.",
+      `  https://github.com/JetBrains/linked/blob/${EXAMPLE_COMMIT}/.github/skills/code-style/SKILL.md`,
+    ].join('\n'),
+  );
+});
+
+test('skills in test directories are test data, not listed; a skill named like one is', () => {
+  // ./fixture: src/jvmTest/… and plugins/markdown/test/testData/…; JetBrains/linked: src/jvmTest/….
+  for (const output of [fixture.stdout, linked.stdout]) assert.doesNotMatch(output, /sample|jvmTest|testData/);
+  assert.match(fixture.stdout, /^tests — /m);
+  for (const path of [
+    'src/test/resources/skills/x/SKILL.md',
+    'tests/x/SKILL.md',
+    'core/__tests__/x/SKILL.md',
+    'testdata/x/SKILL.md',
+    'module/src/commonTest/resources/x/SKILL.md',
+    'module/src/androidUnitTest/x/SKILL.md',
+    'module/src/integrationTest/x/SKILL.md',
+    'app/MyAppTests/x/SKILL.md',
+    'lib/src/testFixtures/x/SKILL.md',
+    'web/fixtures/x/SKILL.md',
+  ]) {
+    assert.deepEqual(findSkills([path], 'repo'), [], path);
+  }
+  for (const path of ['.claude/skills/tests/SKILL.md', '.agents/skills/writing-tests/SKILL.md', 'contest/skills/x/SKILL.md', 'latest/x/SKILL.md']) {
+    assert.equal(findSkills([path], 'repo').length, 1, path);
+  }
+});
+
+test('<URL>/tree/<commit> → that commit, through its tree, a subtree at a time when too large', async () => {
+  const pinned = await atlas(['scan', `https://github.com/JetBrains/pinned/tree/${PINNED_COMMIT}`]);
+  assert.equal(pinned.code, 0, pinned.stderr);
+  assert.equal(pinned.stderr, '');
+  assert.equal(
+    pinned.stdout,
+    [
+      'JetBrains/pinned · 2 skills',
+      'commits — Write commit messages the way this repository does.',
+      `  https://github.com/JetBrains/pinned/blob/${PINNED_COMMIT}/.claude/skills/commits/SKILL.md`,
+      'search — Search the code through MCP.',
+      `  https://github.com/JetBrains/pinned/blob/${PINNED_COMMIT}/modules/mcp/skills/search/SKILL.md`,
+    ].join('\n'),
+  );
+
+  const unknown = await atlas(['scan', 'https://github.com/JetBrains/pinned/tree/no-such-branch']);
+  assert.equal(unknown.code, 1);
+  assert.equal(unknown.stderr, 'Not found in https://github.com/JetBrains/pinned: no-such-branch');
+});
+
+test('a private repository → its files through the API, with the token', async () => {
+  // raw.githubusercontent.com answers 404 for a private repository's files.
+  const id = 'JetBrains/private';
+  const path = '.claude/skills/commits/SKILL.md';
+  const github = replay({
+    [`https://api.github.com/repos/${id}`]: { status: 200, body: { full_name: id, default_branch: 'main' } },
+    [`https://api.github.com/repos/${id}/commits/${EXAMPLE_COMMIT}`]: { status: 200, body: { sha: EXAMPLE_COMMIT } },
+    [`https://api.github.com/repos/${id}/git/trees/${EXAMPLE_COMMIT}?recursive=1`]: {
+      status: 200,
+      body: { truncated: false, tree: [{ path, mode: '100644', type: 'blob', sha: 'x' }] },
+    },
+    [`https://raw.githubusercontent.com/${id}/${EXAMPLE_COMMIT}/${path}`]: { status: 404, body: '404: Not Found' },
+    [`https://api.github.com/repos/${id}/contents/${path}?ref=${EXAMPLE_COMMIT}`]: {
+      status: 200,
+      body: '---\nname: commits\ndescription: Write commit messages.\n---\n',
+    },
+  });
+  const source = await openGitHub(`https://github.com/${id}/tree/${EXAMPLE_COMMIT}`, { fetch: github, token: 'test' });
+  const result = await scan(source);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(
+    result.skills.map((skill) => [skill.name, skill.description]),
+    [['commits', 'Write commit messages.']],
+  );
 });
 
 test('the CLI prints the result at once and stores nothing', (t) => {
@@ -103,7 +193,7 @@ test('--filter keeps the skills with the text in their name, in any case, and co
   assert.equal(
     filtered.stdout,
     [
-      'fixture · 1 of 3 skills matches "COMMITS"',
+      'fixture · 1 of 4 skills matches "COMMITS"',
       'commits — Write commit messages the way this repository does.',
       `  ${pathToFileURL(FIXTURE).href}/.claude/skills/commits/SKILL.md`,
     ].join('\n'),
@@ -118,7 +208,7 @@ test('--filter looks in the whole description, and prints it whole when the text
   assert.equal(
     filtered.stdout,
     [
-      'fixture · 1 of 3 skills matches "kotlin"',
+      'fixture · 1 of 4 skills matches "kotlin"',
       "code-style — Follow the project's code style. Use before committing Kotlin or Java changes.",
       `  ${pathToFileURL(FIXTURE).href}/.github/skills/code-style/SKILL.md`,
     ].join('\n'),
@@ -130,7 +220,7 @@ test('--filter looks in the path, and highlights only the path in the link', asy
   assert.equal(filtered.code, 0, filtered.stderr);
   assert.equal(
     filtered.stdout,
-    ['fixture · 1 of 3 skills matches ".agents/"', 'release-checklist', `  ${pathToFileURL(FIXTURE).href}/[.agents/]skills/release-checklist/SKILL.md`].join('\n'),
+    ['fixture · 1 of 4 skills matches ".agents/"', 'release-checklist', `  ${pathToFileURL(FIXTURE).href}/[.agents/]skills/release-checklist/SKILL.md`].join('\n'),
   );
 
   const example = await atlas(['scan', 'github.com/JetBrains/example', '--filter', 'claude/skills'], marked);
@@ -151,7 +241,7 @@ test('--filter does not look in the rest of the link: the host, the owner, the c
     assert.equal(example.stdout, `JetBrains/example · 0 of 1 skill match ${JSON.stringify(filter)}`);
   }
   // The x of "fixture", the scanned directory.
-  assert.equal((await atlas(['scan', FIXTURE, '--filter', 'x'])).stdout, 'fixture · 0 of 3 skills match "x"');
+  assert.equal((await atlas(['scan', FIXTURE, '--filter', 'x'])).stdout, 'fixture · 0 of 4 skills match "x"');
 });
 
 test('--filter highlights a path as the link writes it, URL-encoded', async (t) => {
@@ -167,7 +257,7 @@ test('--filter highlights a path as the link writes it, URL-encoded', async (t) 
 test('--filter is plain text: no match → no skills, exit code 0', async () => {
   const filtered = await atlas(['scan', FIXTURE, '--filter', '.*']);
   assert.equal(filtered.code, 0, filtered.stderr);
-  assert.equal(filtered.stdout, 'fixture · 0 of 3 skills match ".*"');
+  assert.equal(filtered.stdout, 'fixture · 0 of 4 skills match ".*"');
 });
 
 test('--filter highlights every match in the name, description and link, as it is written', async () => {
@@ -176,7 +266,7 @@ test('--filter highlights every match in the name, description and link, as it i
   assert.equal(
     filtered.stdout,
     [
-      'fixture · 1 of 3 skills matches "Code"',
+      'fixture · 1 of 4 skills matches "Code"',
       "[code]-style — Follow the project's [code] style.",
       `  ${pathToFileURL(FIXTURE).href}/.github/skills/[code]-style/SKILL.md`,
     ].join('\n'),
@@ -186,7 +276,7 @@ test('--filter highlights every match in the name, description and link, as it i
   assert.equal(
     committing.stdout,
     [
-      'fixture · 2 of 3 skills match "commit"',
+      'fixture · 2 of 4 skills match "commit"',
       "code-style — Follow the project's code style. Use before [commit]ting Kotlin or Java changes.",
       `  ${pathToFileURL(FIXTURE).href}/.github/skills/code-style/SKILL.md`,
       '[commit]s — Write [commit] messages the way this repository does.',
@@ -211,7 +301,7 @@ test('the CLI highlights matches black on yellow where it shows colors, and not 
   const plain = spawnSync(process.execPath, [CLI, 'scan', FIXTURE, '--filter', 'commits'], { env: { ...env, NO_COLOR: '1' }, encoding: 'utf8' });
   assert.equal(plain.status, 0, plain.stderr);
   assert.doesNotMatch(plain.stdout, /\x1b/);
-  assert.match(plain.stdout, /^fixture · 1 of 3 skills matches "commits"\ncommits — /);
+  assert.match(plain.stdout, /^fixture · 1 of 4 skills matches "commits"\ncommits — /);
 });
 
 test('--filter without a text, or twice → the usage, exit code 1', async () => {
