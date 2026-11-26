@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import { findSkills } from '../src/core/find.ts';
 import { openGitHub } from '../src/core/github.ts';
 import { parseSkill } from '../src/core/parse.ts';
+import { scan } from '../src/core/scan.ts';
 import { replay } from '../src/core/replay.ts';
 import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE, PINNED_COMMIT } from './helpers.ts';
 
@@ -117,6 +118,32 @@ test('<URL>/tree/<commit> → that commit, through its tree, a subtree at a time
   const unknown = await atlas(['scan', 'https://github.com/JetBrains/pinned/tree/no-such-branch']);
   assert.equal(unknown.code, 1);
   assert.equal(unknown.stderr, 'Not found in https://github.com/JetBrains/pinned: no-such-branch');
+});
+
+test('a private repository → its files through the API, with the token', async () => {
+  // raw.githubusercontent.com answers 404 for a private repository's files.
+  const id = 'JetBrains/private';
+  const path = '.claude/skills/commits/SKILL.md';
+  const github = replay({
+    [`https://api.github.com/repos/${id}`]: { status: 200, body: { full_name: id, default_branch: 'main' } },
+    [`https://api.github.com/repos/${id}/commits/${EXAMPLE_COMMIT}`]: { status: 200, body: { sha: EXAMPLE_COMMIT } },
+    [`https://api.github.com/repos/${id}/git/trees/${EXAMPLE_COMMIT}?recursive=1`]: {
+      status: 200,
+      body: { truncated: false, tree: [{ path, mode: '100644', type: 'blob', sha: 'x' }] },
+    },
+    [`https://raw.githubusercontent.com/${id}/${EXAMPLE_COMMIT}/${path}`]: { status: 404, body: '404: Not Found' },
+    [`https://api.github.com/repos/${id}/contents/${path}?ref=${EXAMPLE_COMMIT}`]: {
+      status: 200,
+      body: '---\nname: commits\ndescription: Write commit messages.\n---\n',
+    },
+  });
+  const source = await openGitHub(`https://github.com/${id}/tree/${EXAMPLE_COMMIT}`, { fetch: github, token: 'test' });
+  const result = await scan(source);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(
+    result.skills.map((skill) => [skill.name, skill.description]),
+    [['commits', 'Write commit messages.']],
+  );
 });
 
 test('the CLI prints the result at once and stores nothing', (t) => {

@@ -21,12 +21,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # The web view's tests run in a real browser.
+      - run: npx playwright install --with-deps chromium
       - run: npm test
       # The real CLI on the fixture repository, as a user would run it: it must exit 0.
       - name: Smoke test
         run: |
           ./skill-atlas help
           ./skill-atlas scan ./fixture
+      - run: npm run build
   # The CLI on real repositories at fixed commits, over live GitHub, against tests/e2e/expected.
   e2e:
     runs-on: ubuntu-latest
