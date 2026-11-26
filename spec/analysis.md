@@ -9,6 +9,9 @@ Skill: id = `repo:path`, name, description, commit
 ## Details
 - **GitHub API**, no clone; *under 5 s* for intellij-community
 - The name: front matter, else the directory
+- *Test data* is not a skill: nothing under `test`, `tests`, `__tests__`, `testData`, `fixtures`,
+  `testFixtures`, or a source set like `jvmTest`, `commonTest`, `AppTests`; the skill's own
+  directory may have such a name
 - The link pins the *scanned commit*
 - Malformed front matter → a *warning*, the scan goes on
 - Unreachable repository → a clear message, exit code 1
