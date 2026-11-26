@@ -1,6 +1,5 @@
 // The decisions in spec/analysis.md and spec/cli.md, checked on what the real command prints for
-// ./fixture and for a small GitHub repository answered in tests/helpers.ts. The edge cases of
-// where skills live are yours to add.
+// ./fixture and for small GitHub repositories answered in tests/helpers.ts.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -8,13 +7,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
+import { findSkills } from '../src/core/find.ts';
 import { openGitHub } from '../src/core/github.ts';
 import { parseSkill } from '../src/core/parse.ts';
 import { replay } from '../src/core/replay.ts';
-import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE } from './helpers.ts';
+import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE, PINNED_COMMIT } from './helpers.ts';
 
 const fixture = await atlas(['scan', FIXTURE]);
 const example = await atlas(['scan', 'github.com/JetBrains/example']);
+const linked = await atlas(['scan', 'github.com/JetBrains/linked']);
 
 test('malformed front matter → the directory name, no description and a warning', () => {
   const parsed = parseSkill(readFileSync(join(FIXTURE, '.agents/skills/release-checklist/SKILL.md'), 'utf8'));
@@ -44,16 +45,78 @@ test('./fixture: every skill, sorted by name, linked to its file, with a warning
   assert.equal(
     fixture.stdout,
     [
-      'fixture · 3 skills',
+      'fixture · 4 skills',
       "code-style — Follow the project's code style.",
       `  ${root}/.github/skills/code-style/SKILL.md`,
       'commits — Write commit messages the way this repository does.',
       `  ${root}/.claude/skills/commits/SKILL.md`,
       'release-checklist',
       `  ${root}/.agents/skills/release-checklist/SKILL.md`,
+      'tests — Run the tests before every push.',
+      `  ${root}/.claude/skills/tests/SKILL.md`,
     ].join('\n'),
   );
+  assert.equal(fixture.stderr, fixture.stderr.split('\n')[0]); // the malformed skill's warning only
   assert.match(fixture.stderr, /^warning: \.agents\/skills\/release-checklist\/SKILL\.md: malformed front matter: /);
+});
+
+test('symbolic link → only the file it points to', () => {
+  // ./fixture links .claude/skills/code-style/SKILL.md and the directory .agents/skills/commits.
+  assert.doesNotMatch(fixture.stdout, /\.claude\/skills\/code-style|\.agents\/skills\/commits/);
+  // GitHub code search finds a linked SKILL.md as well; its directory's tree says it is a link.
+  assert.equal(linked.code, 0, linked.stderr);
+  assert.equal(linked.stderr, '');
+  assert.equal(
+    linked.stdout,
+    [
+      'JetBrains/linked · 1 skill',
+      "code-style — Follow the project's code style.",
+      `  https://github.com/JetBrains/linked/blob/${EXAMPLE_COMMIT}/.github/skills/code-style/SKILL.md`,
+    ].join('\n'),
+  );
+});
+
+test('skills in test directories are test data, not listed; a skill named like one is', () => {
+  // ./fixture: src/jvmTest/… and plugins/markdown/test/testData/…; JetBrains/linked: src/jvmTest/….
+  for (const output of [fixture.stdout, linked.stdout]) assert.doesNotMatch(output, /sample|jvmTest|testData/);
+  assert.match(fixture.stdout, /^tests — /m);
+  for (const path of [
+    'src/test/resources/skills/x/SKILL.md',
+    'tests/x/SKILL.md',
+    'core/__tests__/x/SKILL.md',
+    'testdata/x/SKILL.md',
+    'module/src/commonTest/resources/x/SKILL.md',
+    'module/src/androidUnitTest/x/SKILL.md',
+    'module/src/integrationTest/x/SKILL.md',
+    'app/MyAppTests/x/SKILL.md',
+    'lib/src/testFixtures/x/SKILL.md',
+    'web/fixtures/x/SKILL.md',
+  ]) {
+    assert.deepEqual(findSkills([path], 'repo'), [], path);
+  }
+  for (const path of ['.claude/skills/tests/SKILL.md', '.agents/skills/writing-tests/SKILL.md', 'contest/skills/x/SKILL.md', 'latest/x/SKILL.md']) {
+    assert.equal(findSkills([path], 'repo').length, 1, path);
+  }
+});
+
+test('<URL>/tree/<commit> → that commit, through its tree, a subtree at a time when too large', async () => {
+  const pinned = await atlas(['scan', `https://github.com/JetBrains/pinned/tree/${PINNED_COMMIT}`]);
+  assert.equal(pinned.code, 0, pinned.stderr);
+  assert.equal(pinned.stderr, '');
+  assert.equal(
+    pinned.stdout,
+    [
+      'JetBrains/pinned · 2 skills',
+      'commits — Write commit messages the way this repository does.',
+      `  https://github.com/JetBrains/pinned/blob/${PINNED_COMMIT}/.claude/skills/commits/SKILL.md`,
+      'search — Search the code through MCP.',
+      `  https://github.com/JetBrains/pinned/blob/${PINNED_COMMIT}/modules/mcp/skills/search/SKILL.md`,
+    ].join('\n'),
+  );
+
+  const unknown = await atlas(['scan', 'https://github.com/JetBrains/pinned/tree/no-such-branch']);
+  assert.equal(unknown.code, 1);
+  assert.equal(unknown.stderr, 'Not found in https://github.com/JetBrains/pinned: no-such-branch');
 });
 
 test('the CLI prints the result at once and stores nothing', (t) => {
