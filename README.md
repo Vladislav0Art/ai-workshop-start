@@ -15,9 +15,13 @@ build-tools-bump-gradle-api — Bumps the Gradle API version that Kotlin Gradle 
 
 `./skill-atlas scan https://github.com/JetBrains/kotlin/tree/<commit>` scans that commit.
 
-Set `GITHUB_TOKEN` for a higher GitHub rate limit. `npm test` runs the tests; `npm run test:e2e`, with
+Set `GITHUB_TOKEN` for a higher GitHub rate limit.
+
+The same in a page: `npm run web`, open http://localhost:5173 and paste a repository link
+(React, TypeScript and [shadcn/ui](https://ui.shadcn.com), in [web/](web/)). `npm run build` puts it in `web/dist`.
+
+`npm test` runs the tests; the first time, `npx playwright install chromium` for the web view's. `npm run test:e2e`, with
 `GITHUB_TOKEN`, the end-to-end tests on real repositories.
 
-- [spec/](spec/): what it does. [AGENTS.md](AGENTS.md): the definition of done.
+- [spec/](spec/): what it does; [spec/web.md](spec/web.md) for the page. [AGENTS.md](AGENTS.md): the definition of done.
 - [fixture/](fixture/README.md): a small repository for the tests.
-
