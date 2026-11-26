@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
+import { createBrowserBackend } from '../src/browser.ts';
 import { openGitHub } from '../src/core/github.ts';
 import { parseSkill } from '../src/core/parse.ts';
 import { replay } from '../src/core/replay.ts';
@@ -228,4 +229,24 @@ test('--filter without a text, or twice → the usage, exit code 1', async () =>
     assert.match(failed.stderr, /Usage: skill-atlas scan <GitHub URL \| directory> \[--filter <text>\]$/);
   }
   assert.match((await atlas(['help'])).stdout, /--filter <text>/);
+});
+
+test('the browser terminal takes a quoted --filter with spaces', async () => {
+  const tree = `https://api.github.com/repos/JetBrains/example/git/trees/${EXAMPLE_COMMIT}?recursive=1`;
+  const browser = createBrowserBackend({
+    fetch: replay({
+      'https://api.github.com/repos/JetBrains/example': { status: 200, body: { full_name: 'JetBrains/example', default_branch: 'main' } },
+      'https://api.github.com/repos/JetBrains/example/commits/main': { status: 200, body: { sha: EXAMPLE_COMMIT } },
+      [tree]: { status: 200, body: { truncated: false, tree: [{ path: '.claude/skills/commits/SKILL.md', mode: '100644', type: 'blob', sha: 'x' }] } },
+      [`https://raw.githubusercontent.com/JetBrains/example/${EXAMPLE_COMMIT}/.claude/skills/commits/SKILL.md`]: {
+        status: 200,
+        body: '---\nname: commits\ndescription: Write commit messages the way this repository does.\n---\n',
+      },
+    }),
+  });
+  for (const quoted of ['"commit messages"', "'commit messages'"]) {
+    const output = await browser.run(`$ skill-atlas scan github.com/JetBrains/example --filter ${quoted}`);
+    assert.match(output, /^JetBrains\/example · 1 of 1 skill matches "commit messages"\ncommits — /);
+  }
+  assert.match(await browser.run('scan github.com/JetBrains/example --filter "no such text"'), /· 0 of 1 skill match "no such text"$/);
 });

@@ -23,3 +23,4 @@ JetBrains/kotlin · 2 of 6 skills match "gradle"
 - A match past the first sentence → the whole description, so the match shows
 - Warnings are not filtered; no text (`--filter` followed by `--…` included), or `--filter` twice → the
   usage, exit code 1
+- The browser terminal: quotes keep the spaces, `--filter "code style"`; no highlight yet
