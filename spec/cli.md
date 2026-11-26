@@ -21,4 +21,5 @@ JetBrains/kotlin · 2 of 6 skills match "gradle"
 - Every match is **highlighted**: black on *yellow*, where stdout shows colors (a terminal, not
   `NO_COLOR`, or `FORCE_COLOR`)
 - A match past the first sentence → the whole description, so the match shows
-- Warnings are not filtered; no text, or `--filter` twice → the usage, exit code 1
+- Warnings are not filtered; no text (`--filter` followed by `--…` included), or `--filter` twice → the
+  usage, exit code 1

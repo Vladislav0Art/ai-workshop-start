@@ -54,6 +54,8 @@ function scanArguments(args: string[]): { input: string; filter?: string } {
     if (arg === '--filter' || arg.startsWith('--filter=')) {
       if (filter !== undefined) throw new AtlasError(`--filter is given twice\n${scanUsage}`);
       filter = arg === '--filter' ? args[++index] : arg.slice('--filter='.length);
+      // `--filter --filter=x` is the option twice, not a filter for "--filter=x".
+      if (arg === '--filter' && filter?.startsWith('--')) throw new AtlasError(`--filter needs a text, not ${filter}\n${scanUsage}`);
       if (!filter) throw new AtlasError(`--filter needs a text\n${scanUsage}`);
     } else inputs.push(arg);
   }

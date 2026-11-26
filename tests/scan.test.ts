@@ -218,6 +218,8 @@ test('--filter without a text, or twice → the usage, exit code 1', async () =>
     ['scan', FIXTURE, '--filter'],
     ['scan', FIXTURE, '--filter='],
     ['scan', FIXTURE, '--filter', 'a', '--filter', 'b'],
+    ['scan', FIXTURE, '--filter', '--filter=x'],
+    ['scan', FIXTURE, '--filter', '--filter', 'x'],
     ['scan', '--filter', 'a'],
   ]) {
     const failed = await atlas(args);
